@@ -40,7 +40,7 @@ radio_channel: See description in radio_link.h.
 //                           SET THESE VARIABLES TO MEET YOUR NEEDS                                 //
 //                                   1 = TRUE       0 = FALSE                                       //
 //                                                                                                  //
-  static XDATA const char transmitter_id[] = "ABCDE";                                               //
+  static XDATA const char transmitter_id[] = "699U4";                                               //
 //                                                                                                  //
   static volatile BIT only_listen_for_my_transmitter = 1;                                           //
 // 1 is recommended                                                                                 //
@@ -51,6 +51,10 @@ radio_channel: See description in radio_link.h.
 //                                                                                                  //
   static volatile BIT allow_alternate_usb_protocol = 0;
 // if set to 1 and plugged in to USB then protocol output is suitable for dexterity and similar     //
+
+  static volatile BIT allow_buffer = 1;
+// if set to 1 the values will be stored in a buffer and transmitted every time                     //
+
 //                                                                                                  //
 //..................................................................................................//
 //////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -63,11 +67,11 @@ uint32 XDATA getSrcValue(char srcVal);
 volatile uint32 dex_tx_id;
 #define NUM_CHANNELS        (4)
 static int8 fOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
-static XDATA int8 defaultfOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
-static uint8 nChannels[NUM_CHANNELS] = { 0, 100, 199, 209 };
-static uint32 waitTimes[NUM_CHANNELS] = { 30000, 700, 700, 700 };
+static int8 CODE defaultfOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
+static uint8 CODE nChannels[NUM_CHANNELS] = { 0, 100, 199, 209 };
+static uint32 CODE waitTimes[NUM_CHANNELS] = { 30000, 700, 700, 700 };
 //Now lets try to crank down the channel 1 wait time, if we can 5000 works but it wont catch channel 4 ever
-static uint32 delayedWaitTimes[NUM_CHANNELS] = { 0, 700, 700, 700 };
+static uint32 CODE delayedWaitTimes[NUM_CHANNELS] = { 0, 700, 700, 700 };
 BIT needsTimingCalibration = 1;
 BIT usbEnabled = 1;
 static uint8 save_IEN0;
@@ -75,6 +79,15 @@ static uint8 save_IEN1;
 static uint8 save_IEN2;
 unsigned char XDATA PM2_BUF[7] = {0x06,0x06,0x06,0x06,0x06,0x06,0x04};
 unsigned char XDATA dmaDesc[8] = {0x00,0x00,0xDF,0xBE,0x00,0x07,0x20,0x42};
+
+// Reboot after missing so many packets
+#define RETRY_REBOOT       (4)
+// Size of buffer to keep
+#define BUFFER_SIZE        (4)
+#define BUFFER_SIZE_AND    (3)
+uint16 XDATA buffer_raw[BUFFER_SIZE];
+uint8  XDATA buffer_txId[BUFFER_SIZE];
+uint8  buffer_ptr = 0;
 
 typedef struct _Dexcom_packet {
     uint8   len;
@@ -123,13 +136,13 @@ void uartDisable() {
 
 void blink_yellow_led() {
     if(status_lights) {
-        LED_YELLOW(((getMs()/500) % 2));//Blink half seconds
+        LED_YELLOW(((getMs()/500) & 1));//Blink half seconds
     }
 }
 
 void blink_red_led() {
     if(status_lights) {
-        LED_RED(((getMs()/500) % 2));//Blink half seconds
+        LED_RED(((getMs()/500) & 1));//Blink half seconds
     }
 }
 
@@ -228,14 +241,38 @@ uint32 getSrcValue(char srcVal) {
     return i & 0xFF;
 }
 void print_packet(Dexcom_packet* pPkt) {
+	uint8 i = 0;
+	uint8 j = 0;
+	// Store the raw and txId data in circular buffer
+	if (allow_buffer!=0) {
+		buffer_raw[buffer_ptr] = pPkt->raw;
+		buffer_txId[buffer_ptr] = pPkt->txId;
+		j = buffer_ptr;
+		buffer_ptr = (buffer_ptr+1) & BUFFER_SIZE_AND;
+	}
+
     uartEnable();
     if((allow_alternate_usb_protocol==0)||!usbPowerPresent()) {
       // Classic 3 field protocol for serial/bluetooth only
-      printf("%lu %hhu %d", dex_num_decoder(pPkt->raw), pPkt->battery, adcConvertToMillivolts(adcRead(0)));
+      if (allow_buffer==0)
+    	  printf("[%lu %hhu %d]", dex_num_decoder(pPkt->raw), pPkt->battery, adcConvertToMillivolts(adcRead(0)), pPkt->txId);
+	  else
+      {
+    	  printf("[%lu %hhu %d %hhu", dex_num_decoder(pPkt->raw), pPkt->battery, adcConvertToMillivolts(adcRead(0)), pPkt->txId);
+      }
     } else {
       // Protocol suitable for dexterity android application or python script when running in USB mode
       printf("%lu %lu %lu %hhu %d %hhu %d \r\n", pPkt->src_addr,dex_num_decoder(pPkt->raw),dex_num_decoder(pPkt->filtered)*2, pPkt->battery, getPacketRSSI(pPkt),pPkt->txId,adcConvertToMillivolts(adcRead(0)));
     }
+    
+    // Transmit buffer
+	if (allow_buffer!=0) {
+		for(i = 0; i < BUFFER_SIZE_AND; i++) {
+			j = (j+BUFFER_SIZE_AND) & BUFFER_SIZE_AND;
+    	    printf(" %lu %hhu", dex_num_decoder(buffer_raw[j]), buffer_txId[j]);
+	    }
+  		printf("]");
+	}
     uartDisable();
 }
 
@@ -399,7 +436,6 @@ int WaitForPacket(uint16 milliseconds, Dexcom_packet* pkt, uint8 channel) {
     uint8 * packet = 0;
     uint32 i = 0;
     uint32 seven_minutes = 420000;
-    int nRet = 0;
     swap_channel(nChannels[channel], fOffset[channel]);
 
     while (!milliseconds || (getMs() - start) < milliseconds) {
@@ -409,8 +445,9 @@ int WaitForPacket(uint16 milliseconds, Dexcom_packet* pkt, uint8 channel) {
         }
         doServices();
         if((getMs() - start) > seven_minutes) {
-            killWithWatchdog();
-            delayMs(2000);
+ //           killWithWatchdog();
+ //           delayMs(2000);
+ 			break;
         }
         blink_yellow_led();
         if (packet = radioQueueRxCurrentPacket()) {
@@ -419,7 +456,7 @@ int WaitForPacket(uint16 milliseconds, Dexcom_packet* pkt, uint8 channel) {
             memcpy(pkt, packet, min8(len+2, sizeof(Dexcom_packet)));
             if(radioCrcPassed()) {
                 if(pkt->src_addr == dex_tx_id || dex_tx_id == 0 || only_listen_for_my_transmitter == 0) {
-                    pkt->txId -= channel;
+//                    pkt->txId -= channel;   ?? why do this ?
                     radioQueueRxDoneWithPacket();
                     LED_YELLOW(0);
                     return 1;
@@ -434,7 +471,7 @@ int WaitForPacket(uint16 milliseconds, Dexcom_packet* pkt, uint8 channel) {
         }
     }
     LED_YELLOW(0);
-    return nRet;
+    return 0;
 }
 
 uint32 delayFor(int wait_chan) {
@@ -456,8 +493,8 @@ BIT get_packet(Dexcom_packet* pPkt) {
         }
     }
     needsTimingCalibration = 1;
-    killWithWatchdog();
-    delayMs(2000);
+//   killWithWatchdog();
+//    delayMs(2000);
     return 0;
 }
 
@@ -471,8 +508,17 @@ void configBt() {
     uartDisable();
 }
 
+void clearBuffer() {
+	memset(buffer_raw, 0, sizeof(buffer_raw));
+	memset(buffer_txId, 0, sizeof(buffer_txId));
+	buffer_ptr = 0;
+}
+
 void main() {
+	uint8 retry = 0;
     systemInit();
+	clearBuffer();
+
     initUart1();
     P1DIR |= 0x08; // RTS
     sleepInit();
@@ -489,6 +535,7 @@ void main() {
     radioQueueAllowCrcErrors = 1;
     MCSM1 = 0;
 
+
     while(1) {
         Dexcom_packet Pkt;
         memset(&Pkt, 0, sizeof(Dexcom_packet));
@@ -502,7 +549,19 @@ void main() {
         delayMs(100);
 
         radioMacSleep();
-        goToSleep(280); // Reduce this until we are just on the cusp of missing on the first channels
+		if (needsTimingCalibration)
+		{
+	        goToSleep(10);
+	        retry++;
+	        if (retry>RETRY_REBOOT) {
+	        	killWithWatchdog();
+				delayMs(2000);
+	        }
+		} else
+		{
+			retry = 0;
+	        goToSleep(280); // Reduce this until we are just on the cusp of missing on the first channels
+        }
         radioMacResume();
 
         MCSM1 = 0;
