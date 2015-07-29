@@ -69,7 +69,7 @@ volatile uint32 dex_tx_id;
 static int8 fOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
 static int8 CODE defaultfOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
 static uint8 CODE nChannels[NUM_CHANNELS] = { 0, 100, 199, 209 };
-static uint32 CODE waitTimes[NUM_CHANNELS] = { 30000, 700, 700, 700 };
+static uint32 CODE waitTimes[NUM_CHANNELS] = { 60000, 700, 700, 700 };
 //Now lets try to crank down the channel 1 wait time, if we can 5000 works but it wont catch channel 4 ever
 static uint32 CODE delayedWaitTimes[NUM_CHANNELS] = { 0, 700, 700, 700 };
 BIT needsTimingCalibration = 1;
@@ -551,7 +551,7 @@ void main() {
         radioMacSleep();
 		if (needsTimingCalibration)
 		{
-	        goToSleep(10);
+	        goToSleep(120);
 	        retry++;
 	        if (retry>RETRY_REBOOT) {
 	        	killWithWatchdog();
@@ -560,7 +560,7 @@ void main() {
 		} else
 		{
 			retry = 0;
-	        goToSleep(280); // Reduce this until we are just on the cusp of missing on the first channels
+	        goToSleep(270); // Reduce this until we are just on the cusp of missing on the first channels
         }
         radioMacResume();
 
