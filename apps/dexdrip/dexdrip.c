@@ -69,7 +69,7 @@ volatile uint32 dex_tx_id;
 static int8 fOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
 static int8 CODE defaultfOffset[NUM_CHANNELS] = {0xCE,0xD5,0xE6,0xE5};
 static uint8 CODE nChannels[NUM_CHANNELS] = { 0, 100, 199, 209 };
-static uint32 CODE waitTimes[NUM_CHANNELS] = { 60000, 700, 700, 700 };
+static uint32 CODE waitTimes[NUM_CHANNELS] = { 35000, 700, 700, 700 };
 //Now lets try to crank down the channel 1 wait time, if we can 5000 works but it wont catch channel 4 ever
 static uint32 CODE delayedWaitTimes[NUM_CHANNELS] = { 0, 700, 700, 700 };
 BIT needsTimingCalibration = 1;
@@ -83,8 +83,8 @@ unsigned char XDATA dmaDesc[8] = {0x00,0x00,0xDF,0xBE,0x00,0x07,0x20,0x42};
 // Reboot after missing so many packets
 #define RETRY_REBOOT       (4)
 // Size of buffer to keep
-#define BUFFER_SIZE        (4)
-#define BUFFER_SIZE_AND    (3)
+#define BUFFER_SIZE        (8)
+#define BUFFER_SIZE_AND    (7)
 uint16 XDATA buffer_raw[BUFFER_SIZE];
 uint8  XDATA buffer_txId[BUFFER_SIZE];
 uint8  buffer_ptr = 0;
@@ -560,7 +560,7 @@ void main() {
 		} else
 		{
 			retry = 0;
-	        goToSleep(270); // Reduce this until we are just on the cusp of missing on the first channels
+	        goToSleep(275); // Reduce this until we are just on the cusp of missing on the first channels
         }
         radioMacResume();
 
